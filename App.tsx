@@ -1,17 +1,16 @@
 
 import React, { useState, useEffect } from 'react';
-import { AppTab, Violation } from './types';
-import { Icons } from './constants';
-import DashboardView from './components/DashboardView';
-import LiveCalibrationView from './components/LiveCalibrationView';
-import SourceCodeView from './components/SourceCodeView';
-import AnalyticsView from './components/AnalyticsView';
+import { AppTab, Violation } from './types.ts';
+import { Icons } from './constants.tsx';
+import DashboardView from './components/DashboardView.tsx';
+import LiveCalibrationView from './components/LiveCalibrationView.tsx';
+import SourceCodeView from './components/SourceCodeView.tsx';
+import AnalyticsView from './components/AnalyticsView.tsx';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.DASHBOARD);
   const [violations, setViolations] = useState<Violation[]>([]);
 
-  // Persistent mock data
   useEffect(() => {
     const saved = localStorage.getItem('sentinel_violations');
     if (saved) {
@@ -39,7 +38,6 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
-      {/* Sidebar */}
       <aside className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col">
         <div className="p-6">
           <div className="flex items-center gap-3 text-emerald-500 mb-2">
@@ -92,7 +90,6 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 bg-zinc-950 overflow-y-auto relative">
         {activeTab === AppTab.DASHBOARD && <DashboardView violations={violations} />}
         {activeTab === AppTab.LIVE_CALIBRATION && <LiveCalibrationView onViolation={addViolation} />}
