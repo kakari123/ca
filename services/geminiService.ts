@@ -1,24 +1,21 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-// پاراستنی ئەپڵیکەیشنەکە لە وستان (Crash) ئەگەر پرۆسیس پێناسە نەکرابوو
 const getApiKey = () => {
-  try {
-    return process.env.API_KEY || "";
-  } catch (e) {
-    console.warn("API Key نادۆزرایەوە لە گۆڕاوە ژینگەییەکاندا.");
-    return "";
-  }
+  // لە Vite/Vercel دا، گۆڕاوە ژینگەییەکان بەم شێوەیە دەخوێندرێنەوە
+  const key = (import.meta as any).env?.VITE_API_KEY || (process as any).env?.API_KEY || "";
+  return key;
 };
 
-const apiKey = getApiKey();
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
 export const performANPR = async (base64Image: string): Promise<string> => {
-  if (!ai) {
-    console.error("سیستمی ژیری دەستکرد کارا نییە بەهۆی نەبوونی کلیلی API");
+  const apiKey = getApiKey();
+  
+  if (!apiKey) {
+    console.error("API Key dawkari krawa balam nya.");
     return "ABC-1234 (DEMO)";
   }
+
+  const ai = new GoogleGenAI({ apiKey });
 
   try {
     const response = await ai.models.generateContent({

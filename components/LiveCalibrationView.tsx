@@ -1,8 +1,8 @@
 
-import React, { useRef, useEffect, useState } from 'react';
-import { LINE_A_Y, LINE_B_Y, SPEED_LIMIT, PIXELS_PER_METER, Icons } from '../constants';
-import { Violation } from '../types';
-import { performANPR } from '../services/geminiService';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { LINE_A_Y, LINE_B_Y, SPEED_LIMIT, PIXELS_PER_METER, Icons } from '../constants.tsx';
+import { Violation } from '../types.ts';
+import { performANPR } from '../services/geminiService.ts';
 
 interface LiveCalibrationViewProps {
   onViolation: (v: Omit<Violation, 'id' | 'timestamp'>) => void;
@@ -12,26 +12,57 @@ const LiveCalibrationView: React.FC<LiveCalibrationViewProps> = ({ onViolation }
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const prevFrameRef = useRef<ImageData | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentSpeed, setCurrentSpeed] = useState<number | null>(null);
 
   // Tracking State
   const trackingRef = useRef<{ id: number, start: number, end: number | null } | null>(null);
 
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraActive(false);
+    prevFrameRef.current = null;
+    trackingRef.current = null;
+  }, []);
+
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: "environment"
+        } 
+      });
+      
+      streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        setIsCameraActive(true);
-        setError(null);
+        // چاوەڕێ دەکەین تا کامێراکە بە تەواوی ئامادە دەبێت
+        videoRef.current.onloadedmetadata = () => {
+          setIsCameraActive(true);
+          setError(null);
+        };
       }
     } catch (err) {
-      setError("ڕێگری لە کامێرا کرا یان بوونی نییە.");
+      setError("کێشەیەک لە دەستگەیشتن بە کامێرا هەیە. تکایە دڵنیابەرەوە لە پێدانی مۆڵەت.");
       console.error(err);
     }
   };
+
+  useEffect(() => {
+    return () => stopCamera();
+  }, [stopCamera]);
 
   useEffect(() => {
     let animationFrameId: number;
@@ -47,12 +78,14 @@ const LiveCalibrationView: React.FC<LiveCalibrationViewProps> = ({ onViolation }
       let totalY = 0;
       let count = 0;
 
-      for (let i = 0; i < currentFrame.data.length; i += 40) { // Sample pixels for performance
+      // Sample pixels for efficiency
+      const step = 20; 
+      for (let i = 0; i < currentFrame.data.length; i += step * 4) {
         const rDiff = Math.abs(currentFrame.data[i] - prevFrameRef.current.data[i]);
         const gDiff = Math.abs(currentFrame.data[i+1] - prevFrameRef.current.data[i+1]);
         const bDiff = Math.abs(currentFrame.data[i+2] - prevFrameRef.current.data[i+2]);
 
-        if (rDiff + gDiff + bDiff > 80) { // Motion threshold
+        if (rDiff + gDiff + bDiff > 100) {
           const pixelIndex = i / 4;
           totalX += pixelIndex % width;
           totalY += Math.floor(pixelIndex / width);
@@ -61,7 +94,7 @@ const LiveCalibrationView: React.FC<LiveCalibrationViewProps> = ({ onViolation }
       }
 
       prevFrameRef.current = currentFrame;
-      if (count > 50) { // Minimum pixels to consider as an object
+      if (count > 30) {
         return { x: totalX / count, y: totalY / count };
       }
       return null;
@@ -78,46 +111,72 @@ const LiveCalibrationView: React.FC<LiveCalibrationViewProps> = ({ onViolation }
            return;
         }
 
-        canvasRef.current.width = videoWidth;
-        canvasRef.current.height = videoHeight;
+        if (canvasRef.current.width !== videoWidth) {
+            canvasRef.current.width = videoWidth;
+            canvasRef.current.height = videoHeight;
+        }
 
+        // کێشانەوەی ڤیدیۆکە لەسەر کەینڤەسەکە
         ctx.drawImage(videoRef.current, 0, 0, videoWidth, videoHeight);
 
         const motion = processMotion(ctx, videoWidth, videoHeight);
         const ay = videoHeight * LINE_A_Y;
         const by = videoHeight * LINE_B_Y;
 
-        // Draw Lines
-        ctx.lineWidth = 3;
+        // Draw HUD
+        ctx.lineWidth = 2;
+        // Line A (Entry)
         ctx.strokeStyle = '#10b981';
+        ctx.setLineDash([5, 5]);
         ctx.beginPath(); ctx.moveTo(0, ay); ctx.lineTo(videoWidth, ay); ctx.stroke();
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 12px Inter';
+        ctx.fillText('ENTRY SENSOR A', 10, ay - 10);
+
+        // Line B (Exit)
         ctx.strokeStyle = '#f43f5e';
         ctx.beginPath(); ctx.moveTo(0, by); ctx.lineTo(videoWidth, by); ctx.stroke();
+        ctx.fillStyle = '#f43f5e';
+        ctx.fillText('EXIT SENSOR B', 10, by + 20);
+        ctx.setLineDash([]);
 
         if (motion) {
-          // Visual feedback for tracked object
+          // Visual tracker
           ctx.beginPath();
-          ctx.arc(motion.x, motion.y, 20, 0, Math.PI * 2);
+          ctx.arc(motion.x, motion.y, 25, 0, Math.PI * 2);
           ctx.strokeStyle = '#fbbf24';
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          
+          // Crosshair
+          ctx.beginPath();
+          ctx.moveTo(motion.x - 30, motion.y); ctx.lineTo(motion.x + 30, motion.y);
+          ctx.moveTo(motion.x, motion.y - 30); ctx.lineTo(motion.x, motion.y + 30);
           ctx.stroke();
 
-          // Detection Logic
-          if (motion.y > ay && motion.y < ay + 30 && !trackingRef.current) {
+          // Speed Detection Logic
+          if (motion.y > ay && motion.y < ay + 50 && !trackingRef.current) {
             trackingRef.current = { id: Date.now(), start: Date.now(), end: null };
           }
 
-          if (motion.y > by && motion.y < by + 30 && trackingRef.current && !trackingRef.current.end) {
+          if (motion.y > by && motion.y < by + 50 && trackingRef.current && !trackingRef.current.end) {
             trackingRef.current.end = Date.now();
             const durationSec = (trackingRef.current.end - trackingRef.current.start) / 1000;
             const pixelDist = Math.abs(by - ay);
             const meterDist = pixelDist / PIXELS_PER_METER;
             const speedKMH = (meterDist / durationSec) * 3.6;
 
+            setCurrentSpeed(speedKMH);
+
             if (speedKMH > SPEED_LIMIT && !isProcessing) {
                handleViolationCapture(speedKMH, ctx);
             }
-            setTimeout(() => { trackingRef.current = null; }, 2000);
+            
+            // Reset tracking after a short delay
+            setTimeout(() => { 
+              trackingRef.current = null;
+              setCurrentSpeed(null);
+            }, 1500);
           }
         }
       }
@@ -132,8 +191,8 @@ const LiveCalibrationView: React.FC<LiveCalibrationViewProps> = ({ onViolation }
     setIsProcessing(true);
     const imageData = canvasRef.current!.toDataURL('image/jpeg', 0.8);
     
-    // UI Feedback for capture
-    ctx.fillStyle = 'rgba(244, 63, 94, 0.3)';
+    // Visual flash effect
+    ctx.fillStyle = 'white';
     ctx.fillRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
 
     try {
@@ -150,81 +209,125 @@ const LiveCalibrationView: React.FC<LiveCalibrationViewProps> = ({ onViolation }
   };
 
   return (
-    <div className="p-8 h-full flex flex-col gap-8 max-w-5xl mx-auto">
-      <header className="flex justify-between items-start">
+    <div className="p-8 h-full flex flex-col gap-8 max-w-6xl mx-auto">
+      <header className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold text-white">Sensor Calibration</h2>
-          <p className="text-zinc-500 mt-1">Adjust PIXELS_PER_METER based on physical distance measurement.</p>
+          <h2 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
+            <span className="p-2 bg-emerald-500/10 rounded-lg text-emerald-500"><Icons.Camera /></span>
+            Sensor Calibration
+          </h2>
+          <p className="text-zinc-500 mt-1">Live feed analysis for speed enforcement and plate recognition.</p>
         </div>
-        {isCameraActive && (
-          <div className="px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center gap-3">
-             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-             <span className="text-xs font-bold text-emerald-400">ACTIVE TRACKING</span>
-          </div>
-        )}
+        
+        <div className="flex gap-3">
+          {isCameraActive ? (
+            <button 
+              onClick={stopCamera}
+              className="px-6 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-bold rounded-xl transition-all border border-zinc-700 flex items-center gap-2"
+            >
+              <div className="w-2 h-2 bg-rose-500 rounded-full" />
+              Stop Feed
+            </button>
+          ) : (
+            <button 
+              onClick={startCamera}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
+            >
+              <Icons.Camera />
+              Start Sensor
+            </button>
+          )}
+        </div>
       </header>
 
       {!isCameraActive ? (
-        <div className="flex-1 flex flex-col items-center justify-center bg-zinc-900 border-2 border-dashed border-zinc-800 rounded-3xl gap-6">
-          <div className="p-6 bg-emerald-500/10 rounded-full border border-emerald-500/20 text-emerald-500">
+        <div className="flex-1 flex flex-col items-center justify-center bg-zinc-900/50 border-2 border-dashed border-zinc-800 rounded-[2.5rem] gap-6 group transition-all hover:bg-zinc-900 hover:border-emerald-500/30">
+          <div className="p-8 bg-zinc-800 rounded-full text-zinc-600 group-hover:text-emerald-500 group-hover:scale-110 transition-all duration-500">
             <Icons.Camera />
           </div>
           <div className="text-center">
-            <h3 className="text-xl font-semibold text-zinc-300">Awaiting Sensor Activation</h3>
-            <p className="text-zinc-500 mt-2 max-w-sm px-4">Click below to connect your laptop camera as a traffic sensor.</p>
+            <h3 className="text-2xl font-bold text-zinc-300">No Active Stream</h3>
+            <p className="text-zinc-500 mt-2 max-w-xs mx-auto text-sm leading-relaxed">
+              Connect your local camera to start the traffic monitoring engine and calibrate sensors.
+            </p>
           </div>
-          <button 
-            onClick={startCamera}
-            className="px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl transition-all shadow-lg"
-          >
-            Activate Camera
-          </button>
-          {error && <p className="text-rose-500 text-sm font-medium">{error}</p>}
+          {error && (
+            <div className="mt-4 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-500 text-sm font-medium flex items-center gap-2 animate-bounce">
+              <Icons.Alert />
+              {error}
+            </div>
+          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-4">
-             <div className="relative rounded-3xl overflow-hidden bg-black border border-zinc-800 shadow-2xl aspect-video">
-               <video ref={videoRef} autoPlay playsInline className="hidden" />
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Main Video Section */}
+          <div className="lg:col-span-8 space-y-6">
+             <div className="relative rounded-[2rem] overflow-hidden bg-black border border-zinc-800 shadow-2xl aspect-video group">
+               <video ref={videoRef} autoPlay playsInline muted className="hidden" />
                <canvas ref={canvasRef} className="w-full h-full object-cover" />
+               
+               {/* Overlays */}
+               <div className="absolute top-6 left-6 flex gap-3">
+                  <div className="px-3 py-1.5 bg-black/60 backdrop-blur-md border border-white/10 rounded-lg flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                    <span className="text-[10px] font-black text-white uppercase tracking-tighter">Live Stream</span>
+                  </div>
+                  {currentSpeed && (
+                    <div className="px-3 py-1.5 bg-rose-600 border border-rose-400 rounded-lg flex items-center gap-2 shadow-lg animate-in zoom-in-95">
+                      <span className="text-xs font-black text-white">{currentSpeed.toFixed(1)} KM/H</span>
+                    </div>
+                  )}
+               </div>
+
                {isProcessing && (
-                 <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center flex-col gap-3">
-                    <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs font-bold text-white tracking-widest uppercase">Analyzing Plate...</span>
+                 <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-md flex items-center justify-center flex-col gap-4 animate-in fade-in duration-300">
+                    <div className="relative">
+                      <div className="w-16 h-16 border-4 border-emerald-500/20 rounded-full" />
+                      <div className="absolute inset-0 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                    <div className="text-center">
+                      <span className="text-xs font-black text-white tracking-[0.2em] uppercase block mb-1">AI Detection Active</span>
+                      <span className="text-[10px] text-zinc-500 font-mono">Running Gemini ANPR Engine...</span>
+                    </div>
                  </div>
                )}
              </div>
              
-             <div className="grid grid-cols-3 gap-4">
-                <MetricCard label="PPI" value={PIXELS_PER_METER.toString()} unit="px/m" />
-                <MetricCard label="FPS" value="30" unit="active" />
-                <MetricCard label="GATE DIST" value="~1.8" unit="meters" />
+             <div className="grid grid-cols-3 gap-6">
+                <MetricCard label="Pixels Per Meter" value={PIXELS_PER_METER.toString()} unit="px/m" />
+                <MetricCard label="Frame Resolution" value="1280x720" unit="720p" />
+                <MetricCard label="Sampling Rate" value="60" unit="ms" />
              </div>
           </div>
 
-          <div className="space-y-6">
-            <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-3xl">
-              <h4 className="font-bold text-zinc-300 mb-4">Physics Config</h4>
-              <div className="space-y-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Speed Limit</span>
-                  <span className="text-zinc-300 font-bold">{SPEED_LIMIT} km/h</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Entry Gate (A)</span>
-                  <span className="text-emerald-400 font-bold">{(LINE_A_Y * 100).toFixed(0)}%</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">Exit Gate (B)</span>
-                  <span className="text-rose-400 font-bold">{(LINE_B_Y * 100).toFixed(0)}%</span>
+          {/* Configuration Sidebar */}
+          <div className="lg:col-span-4 space-y-6">
+            <div className="p-8 bg-zinc-900 border border-zinc-800 rounded-[2rem] shadow-xl">
+              <h4 className="font-black text-zinc-100 text-sm uppercase tracking-widest mb-6 flex items-center gap-2">
+                <div className="w-1 h-4 bg-emerald-500 rounded-full" />
+                Engine Params
+              </h4>
+              <div className="space-y-6">
+                <ConfigSlider label="Speed Limit" value={`${SPEED_LIMIT} km/h`} />
+                <ConfigSlider label="Calibration PPI" value={`${PIXELS_PER_METER}`} />
+                
+                <div className="pt-4 border-t border-zinc-800 space-y-3">
+                  <div className="flex justify-between text-[11px] font-bold">
+                    <span className="text-zinc-500 uppercase tracking-tighter">Gate A Pos</span>
+                    <span className="text-emerald-400">{(LINE_A_Y * 100).toFixed(0)}% (TOP)</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] font-bold">
+                    <span className="text-zinc-500 uppercase tracking-tighter">Gate B Pos</span>
+                    <span className="text-rose-400">{(LINE_B_Y * 100).toFixed(0)}% (BOTTOM)</span>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="p-6 bg-zinc-950 border border-zinc-800 rounded-3xl">
-               <h4 className="font-bold text-zinc-300 mb-2">How it works:</h4>
-               <p className="text-xs text-zinc-500 leading-relaxed">
-                 The system compares consecutive frames to isolate motion. When the centroid of motion passes the Green line, a timer starts. Crossing the Red line finishes the measurement.
+            <div className="p-6 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl flex flex-col gap-3">
+               <h4 className="font-bold text-emerald-400 text-xs uppercase tracking-widest">Calibration Tip</h4>
+               <p className="text-[11px] text-zinc-400 leading-relaxed">
+                 Measure the physical distance between Gate A and B on the road. Divide the pixel distance by physical meters to find your local <span className="text-zinc-100 font-bold">PPI</span> value.
                </p>
             </div>
           </div>
@@ -235,11 +338,23 @@ const LiveCalibrationView: React.FC<LiveCalibrationViewProps> = ({ onViolation }
 };
 
 const MetricCard = ({ label, value, unit }: { label: string, value: string, unit: string }) => (
-  <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col">
-    <span className="text-[10px] text-zinc-600 font-bold uppercase mb-1">{label}</span>
-    <div className="flex items-baseline gap-1">
-      <span className="text-xl font-bold text-zinc-200">{value}</span>
-      <span className="text-[10px] text-zinc-600">{unit}</span>
+  <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col group hover:border-zinc-700 transition-colors">
+    <span className="text-[10px] text-zinc-500 font-black uppercase mb-2 tracking-widest">{label}</span>
+    <div className="flex items-baseline gap-2">
+      <span className="text-2xl font-black text-zinc-100">{value}</span>
+      <span className="text-[10px] text-zinc-600 font-bold uppercase">{unit}</span>
+    </div>
+  </div>
+);
+
+const ConfigSlider = ({ label, value }: { label: string, value: string }) => (
+  <div className="space-y-2">
+    <div className="flex justify-between text-[11px] font-black uppercase tracking-widest">
+      <span className="text-zinc-500">{label}</span>
+      <span className="text-zinc-100">{value}</span>
+    </div>
+    <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+      <div className="h-full bg-emerald-500 w-2/3" />
     </div>
   </div>
 );
