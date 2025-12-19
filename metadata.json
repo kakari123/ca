@@ -1,0 +1,7 @@
+{
+  "name": "SentinelTraffic - Speed & ANPR Dashboard",
+  "description": "A comprehensive real-time traffic monitoring system providing speed detection, automated number plate recognition (ANPR), and violation management. Includes full source code for Python/C#/SQL implementations.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
