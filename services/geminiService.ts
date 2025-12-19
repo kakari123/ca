@@ -1,20 +1,16 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-const getApiKey = () => {
-  // لە Vite/Vercel دا، گۆڕاوە ژینگەییەکان بەم شێوەیە دەخوێندرێنەوە
-  const key = (import.meta as any).env?.VITE_API_KEY || (process as any).env?.API_KEY || "";
-  return key;
-};
-
 export const performANPR = async (base64Image: string): Promise<string> => {
-  const apiKey = getApiKey();
+  // بەکارهێنانی ڕاستەوخۆی process.env.API_KEY بەپێی ڕێنماییەکان
+  const apiKey = process.env.API_KEY;
   
   if (!apiKey) {
-    console.error("API Key dawkari krawa balam nya.");
+    console.warn("API Key missing, using demo plate.");
     return "ABC-1234 (DEMO)";
   }
 
+  // دروستکردنی ئینستانسی نوێی AI پێش هەر داواکارییەک
   const ai = new GoogleGenAI({ apiKey });
 
   try {
@@ -22,18 +18,29 @@ export const performANPR = async (base64Image: string): Promise<string> => {
       model: "gemini-3-flash-preview",
       contents: {
         parts: [
-          { inlineData: { data: base64Image.split(',')[1], mimeType: 'image/jpeg' } },
-          { text: "تەنها ژمارەی تابلۆی ئۆتۆمبێلەکە بخوێنەوە. تەنها دەقەکە بنووسە بەبێ هیچ وشەیەکی زیادە." }
+          { 
+            inlineData: { 
+              data: base64Image.split(',')[1], 
+              mimeType: 'image/jpeg' 
+            } 
+          },
+          { text: "Extract only the vehicle license plate number from this image. Output the text directly with no extra words." }
         ]
       },
       config: {
-        responseMimeType: "text/plain",
+        systemInstruction: "You are an expert ANPR (Automated Number Plate Recognition) system. Your goal is to accurately read and return only the characters on a vehicle's license plate.",
       }
     });
 
-    return response.text?.trim() || "UNKNOWN";
-  } catch (error) {
+    // بەکارهێنانی .text وەک property نەک وەک method
+    const plateText = response.text;
+    return plateText?.trim() || "UNKNOWN";
+  } catch (error: any) {
     console.error("ANPR Error:", error);
-    return "ERR-001";
+    // گەڕاندنەوەی ئیرۆر ئەگەر کێشەی دەسەڵات (Permission) هەبێت
+    if (error?.message?.includes("Requested entity was not found")) {
+      return "AUTH_REQUIRED";
+    }
+    return "ERR_ANPR";
   }
 };
