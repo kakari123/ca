@@ -1,6 +1,13 @@
 
 import { GoogleGenAI } from "@google/genai";
 
+// ئەگەر جۆرەکانی Node بارنەکرابوون، لێرەدا بە شێوەیەکی دەستی دەیناسێنین
+declare var process: {
+  env: {
+    API_KEY?: string;
+  };
+};
+
 export const performANPR = async (base64Image: string): Promise<string> => {
   // بەکارهێنانی ڕاستەوخۆی process.env.API_KEY بەپێی ڕێنماییەکان
   const apiKey = process.env.API_KEY;
@@ -32,12 +39,10 @@ export const performANPR = async (base64Image: string): Promise<string> => {
       }
     });
 
-    // بەکارهێنانی .text وەک property نەک وەک method
     const plateText = response.text;
     return plateText?.trim() || "UNKNOWN";
   } catch (error: any) {
     console.error("ANPR Error:", error);
-    // گەڕاندنەوەی ئیرۆر ئەگەر کێشەی دەسەڵات (Permission) هەبێت
     if (error?.message?.includes("Requested entity was not found")) {
       return "AUTH_REQUIRED";
     }
